@@ -1,48 +1,51 @@
-import 'dart:io';
+import 'dart:convert';
+
 import 'package:http/http.dart' as http;
+
 import 'auth_service.dart';
 
 class AttendanceService {
-  static const String baseUrl = 'https://f1f0-36-70-93-80.ngrok-free.app/api';
+  static const String baseUrl = 'https://60b1-175-158-56-88.ngrok-free.app/api';
 
-  Future<bool> clockIn({
+  Future<http.Response> clockIn({
     required int employeeId,
     required int officeId,
     required double latitude,
     required double longitude,
-    required File photo,
+    required String photoBase64,
   }) async {
     try {
-      var request = http.MultipartRequest(
-        'POST',
-        Uri.parse('$baseUrl/admin/attendances'),
-      );
-
-      // Add text fields
-      request.fields.addAll({
-        'employee_id': employeeId.toString(),
-        'office_id': officeId.toString(),
-        'latitude': latitude.toString(),
-        'longitude': longitude.toString(),
+      // Data yang akan dikirim ke API
+      final body = jsonEncode({
+        'employee_id': employeeId,
+        'office_id': officeId,
+        'latitude': latitude,
+        'longitude': longitude,
         'status': 'Hadir',
+        'photo': photoBase64,
       });
 
-      // Add photo
-      request.files.add(
-        await http.MultipartFile.fromPath('photo', photo.path),
+      // Mendapatkan token autentikasi
+      final token = await AuthService().getToken();
+
+      // Permintaan HTTP POST
+      final response = await http.post(
+        Uri.parse('$baseUrl/admin/attendances'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: body,
       );
 
-      // Add token to headers
-      final token = await AuthService().getToken();
-      request.headers.addAll({
-        'Authorization': 'Bearer $token',
-      });
+      print('Response: ${response.body}'); // Untuk debugging
 
-      var response = await request.send();
-      return response.statusCode == 200;
+      // Mengembalikan response untuk memproses status code dan body di tempat lain
+      return response;
     } catch (e) {
       print('Clock in error: $e');
-      return false;
+      // Jika terjadi error pada request, kembalikan response dengan status 500
+      return http.Response('Failed to clock in', 500);
     }
   }
 }

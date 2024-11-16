@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/auth_service.dart';
@@ -16,6 +17,7 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Attendance App',
       theme: ThemeData(
+        fontFamily: 'Gilroy',
         primarySwatch: Colors.blue,
         scaffoldBackgroundColor: const Color(0xFFFAFAFA),
       ),

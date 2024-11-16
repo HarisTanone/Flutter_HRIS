@@ -1,10 +1,12 @@
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+
 import '../models/user_model.dart';
 
 class AuthService {
-  static const String baseUrl = 'https://f1f0-36-70-93-80.ngrok-free.app/api';
+  static const String baseUrl = 'https://60b1-175-158-56-88.ngrok-free.app/api';
   static const String userKey = 'user_data';
   static const String tokenKey = 'auth_token';
 

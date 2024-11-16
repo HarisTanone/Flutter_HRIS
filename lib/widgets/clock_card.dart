@@ -1,9 +1,14 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-import '../services/auth_service.dart';
 import 'package:intl/intl.dart';
-import '../services/location_service.dart';
-import '../services/camera_service.dart';
+
 import '../services/attendance_service.dart';
+import '../services/auth_service.dart';
+import '../services/camera_service.dart';
+import '../services/location_service.dart';
 
 class ClockCard extends StatefulWidget {
   const ClockCard({super.key});
@@ -18,8 +23,10 @@ class _ClockCardState extends State<ClockCard> {
   final _attendanceService = AttendanceService();
   bool _isLoading = false;
   bool _hasCheckedIn = false;
+  bool _showCamera = false;
+  File? _capturedImage;
   String formattedDate = DateFormat('dd MMM yyyy').format(DateTime.now());
-  String officeName = ''; // Untuk menyimpan nama kantor secara dinamis
+  String officeName = '';
 
   @override
   void initState() {
@@ -30,8 +37,6 @@ class _ClockCardState extends State<ClockCard> {
   Future<void> _initializeServices() async {
     try {
       await _cameraService.initialize();
-
-      // Ambil data user untuk mendapatkan nama kantor
       final user = await AuthService().getUserData();
       if (user?.employee?.officeId != null) {
         setState(() {
@@ -44,43 +49,55 @@ class _ClockCardState extends State<ClockCard> {
   }
 
   Future<void> _handleClockIn() async {
+    // Tampilkan kamera terlebih dahulu
+    setState(() => _showCamera = true);
+  }
+
+  Future<void> _submitAttendance() async {
     try {
       setState(() => _isLoading = true);
 
-      // Get current location
       final position = await _locationService.getCurrentLocation();
       if (position == null) {
         throw 'Could not get location';
       }
 
-      // Take picture
-      final photo = await _cameraService.takePicture();
-      if (photo == null) {
-        throw 'Could not take picture';
+      if (_capturedImage == null) {
+        throw 'Please take a photo first';
       }
 
-      // Get user data
+      final base64Image = await _cameraService.convertToBase64(_capturedImage!);
+
       final user = await AuthService().getUserData();
       if (user?.employee == null) {
         throw 'User data not found';
       }
 
-      // Submit attendance
-      final success = await _attendanceService.clockIn(
+      final response = await _attendanceService.clockIn(
         employeeId: user!.employee!.id,
         officeId: user.employee!.officeId.id,
         latitude: position.latitude,
         longitude: position.longitude,
-        photo: photo,
+        photoBase64: base64Image,
       );
 
-      if (success) {
-        setState(() => _hasCheckedIn = true);
+      if (response.statusCode == 200) {
+        setState(() {
+          _hasCheckedIn = true;
+          _showCamera = false;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Clock in successful')),
         );
+      } else if (response.statusCode == 404) {
+        final errorMessage = response.body.isNotEmpty
+            ? json.decode(response.body)['message']
+            : 'Unknown error occurred';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errorMessage)),
+        );
       } else {
-        throw 'Clock in failed';
+        throw 'Clock in failed with status: ${response.statusCode}';
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -88,6 +105,24 @@ class _ClockCardState extends State<ClockCard> {
       );
     } finally {
       setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _takePicture() async {
+    try {
+      final capturedImage = await _cameraService.takePicture();
+      if (capturedImage != null) {
+        setState(() {
+          _capturedImage = capturedImage;
+          _showCamera = false; // Sembunyikan kamera setelah mengambil gambar
+        });
+        // Lanjut ke proses submit
+        await _submitAttendance();
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString())),
+      );
     }
   }
 
@@ -124,42 +159,84 @@ class _ClockCardState extends State<ClockCard> {
             ),
           ),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed:
-                      _hasCheckedIn || _isLoading ? null : _handleClockIn,
-                  icon: _isLoading
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : const Icon(Icons.login),
-                  label: Text(_hasCheckedIn ? 'Checked In' : 'Clock In'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: Colors.blue,
+          if (_showCamera && _cameraService.controller != null) ...[
+            SizedBox(
+              height: 420,
+              width: double.infinity,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: CameraPreview(_cameraService.controller!),
+              ),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: _takePicture,
+              icon: const Icon(Icons.camera),
+              label: const Text('Take Picture'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: Colors.blue,
+              ),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: () {
+                setState(() {
+                  _showCamera = false;
+                  _capturedImage = null;
+                });
+              },
+              icon: const Icon(Icons.cancel),
+              label: const Text('Cancel'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: Colors.red,
+              ),
+            ),
+          ] else ...[
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _handleClockIn,
+                    icon: _isLoading
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : const Icon(Icons.login),
+                    label: Text(_hasCheckedIn ? 'Checked In' : 'Clock In'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: Colors.blue,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: null,
-                  icon: const Icon(Icons.logout),
-                  label: const Text('Clock Out'),
-                  style: const ButtonStyle(
-                    backgroundColor: WidgetStatePropertyAll(Colors.white),
-                    foregroundColor: WidgetStatePropertyAll(Colors.blue),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: null,
+                    icon: const Icon(Icons.logout),
+                    label: const Text('Clock Out'),
+                    style: const ButtonStyle(
+                      backgroundColor: WidgetStatePropertyAll(Colors.white),
+                      foregroundColor: WidgetStatePropertyAll(Colors.blue),
+                    ),
                   ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
+          if (_capturedImage != null && !_hasCheckedIn) ...[
+            const SizedBox(height: 16),
+            const Text(
+              'Photo captured successfully!',
+              style: TextStyle(color: Colors.white),
+            ),
+          ],
         ],
       ),
     );

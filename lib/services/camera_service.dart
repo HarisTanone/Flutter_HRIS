@@ -1,8 +1,10 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:camera/camera.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
-import 'dart:io';
-import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
 
 class CameraService {
   CameraController? _controller;
@@ -13,19 +15,36 @@ class CameraService {
     ),
   );
 
+  CameraController? get controller => _controller;
+
   Future<void> initialize() async {
-    final cameras = await availableCameras();
-    final front = cameras.firstWhere(
-      (camera) => camera.lensDirection == CameraLensDirection.front,
-    );
+    try {
+      final cameras = await availableCameras();
+      final front = cameras.firstWhere(
+        (camera) => camera.lensDirection == CameraLensDirection.front,
+        orElse: () => throw 'No front camera found',
+      );
 
-    _controller = CameraController(
-      front,
-      ResolutionPreset.medium,
-      enableAudio: false,
-    );
+      _controller = CameraController(
+        front,
+        ResolutionPreset.medium,
+        enableAudio: false,
+      );
 
-    await _controller!.initialize();
+      await _controller!.initialize();
+    } catch (e) {
+      throw 'Failed to initialize camera: $e';
+    }
+  }
+
+  // Fungsi untuk mengonversi gambar menjadi Base64
+  Future<String> convertToBase64(File file) async {
+    try {
+      final bytes = await file.readAsBytes();
+      return base64Encode(bytes);
+    } catch (e) {
+      throw 'Failed to convert image to Base64: $e';
+    }
   }
 
   Future<File?> takePicture() async {
@@ -33,28 +52,42 @@ class CameraService {
       throw 'Camera not initialized';
     }
 
-    // Take picture
-    final XFile picture = await _controller!.takePicture();
+    try {
+      // Ambil gambar dari kamera
+      final XFile picture = await _controller!.takePicture();
 
-    // Detect faces
-    final inputImage = InputImage.fromFilePath(picture.path);
-    final faces = await _faceDetector.processImage(inputImage);
+      // Deteksi wajah pada gambar
+      final inputImage = InputImage.fromFilePath(picture.path);
+      final faces = await _faceDetector.processImage(inputImage);
 
-    // Verify one face is detected
-    if (faces.isEmpty) {
-      throw 'No face detected';
+      if (faces.isEmpty) {
+        throw 'No face detected. Please try again.';
+      }
+      if (faces.length > 1) {
+        throw 'Multiple faces detected. Ensure only one face is in the frame.';
+      }
+
+      // Simpan gambar ke direktori sementara
+      final tempDir = await getTemporaryDirectory();
+      final fileName =
+          'attendance_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final savedImage = File(path.join(tempDir.path, fileName));
+      await File(picture.path).copy(savedImage.path);
+
+      // Kembalikan file yang telah disimpan
+      return savedImage;
+    } catch (e) {
+      throw 'Error taking picture: $e';
     }
-    if (faces.length > 1) {
-      throw 'Multiple faces detected';
+  }
+
+  // Fungsi tambahan untuk mengambil gambar dan mengonversinya ke Base64
+  Future<String> takePictureAndConvertToBase64() async {
+    final file = await takePicture();
+    if (file == null) {
+      throw 'Failed to take picture';
     }
-
-    // Save image to temporary directory
-    final tempDir = await getTemporaryDirectory();
-    final fileName = 'attendance_${DateTime.now().millisecondsSinceEpoch}.jpg';
-    final savedImage = File(path.join(tempDir.path, fileName));
-    await File(picture.path).copy(savedImage.path);
-
-    return savedImage;
+    return convertToBase64(file);
   }
 
   void dispose() {
