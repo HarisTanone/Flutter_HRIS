@@ -2,12 +2,13 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../models/attendance_model.dart';
 import 'auth_service.dart';
 
 class AttendanceService {
-  static const String baseUrl = 'https://9d3d-36-70-95-221.ngrok-free.app/api';
+  static const String baseUrl = 'https://7928-36-77-243-75.ngrok-free.app/api';
 
-  Future<http.Response> clockIn({
+  Future<Map<String, dynamic>> clockIn({
     required int employeeId,
     required int officeId,
     required double latitude,
@@ -25,7 +26,6 @@ class AttendanceService {
       });
 
       final token = await AuthService().getToken();
-
       final response = await http.post(
         Uri.parse('$baseUrl/admin/attendances'),
         headers: {
@@ -35,18 +35,24 @@ class AttendanceService {
         body: body,
       );
 
-      print('Response: ${response.body}');
-      return response;
+      final Map<String, dynamic> responseData = json.decode(response.body);
+      return {
+        'status': response.statusCode,
+        'message': responseData['message'],
+        'data': responseData['data'],
+      };
     } catch (e) {
-      print('Clock in error: $e');
-      return http.Response('Failed to clock in', 500);
+      return {
+        'status': 500,
+        'message': 'Failed to clock in: $e',
+        'data': null,
+      };
     }
   }
 
   Future<Map<String, dynamic>?> getTodayAttendance(int employeeId) async {
     try {
       final token = await AuthService().getToken();
-      print('$baseUrl/admin/attendances/today/$employeeId');
       final response = await http.get(
         Uri.parse('$baseUrl/admin/attendances/today/$employeeId'),
         headers: {
@@ -61,12 +67,11 @@ class AttendanceService {
       }
       return null;
     } catch (e) {
-      print('Get today attendance error: $e');
       return null;
     }
   }
 
-  Future<http.Response> clockOut({
+  Future<Map<String, dynamic>> clockOut({
     required int attendanceId,
     required double latitude,
     required double longitude,
@@ -74,7 +79,6 @@ class AttendanceService {
   }) async {
     try {
       final body = jsonEncode({
-        'clock_out': DateTime.now().toIso8601String(),
         'latitude_out': latitude,
         'longitude_out': longitude,
         'photo_out': photoBase64,
@@ -90,11 +94,41 @@ class AttendanceService {
         body: body,
       );
 
-      print('Clock out response: ${response.body}');
-      return response;
+      final Map<String, dynamic> responseData = json.decode(response.body);
+      return {
+        'status': response.statusCode,
+        'message': responseData['message'],
+        'data': responseData['data'],
+      };
     } catch (e) {
-      print('Clock out error: $e');
-      return http.Response('Failed to clock out', 500);
+      return {
+        'status': 500,
+        'message': 'Failed to clock out: $e',
+        'data': null,
+      };
+    }
+  }
+
+  static Future<AttendanceData> getMonthlyAttendance(
+      int employeeId, String month) async {
+    try {
+      final token = await AuthService().getToken();
+      final response = await http.get(
+        Uri.parse('$baseUrl/admin/attendance/monthly/$employeeId/$month'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        return AttendanceData.fromJson(jsonDecode(response.body));
+      } else {
+        throw Exception('Tidak Ada Data Absensi Bulan Ini');
+      }
+    } catch (e) {
+      print('Get monthly attendance error: $e');
+      throw Exception('Tidak Ada Data Absensi Bulan Ini');
     }
   }
 }

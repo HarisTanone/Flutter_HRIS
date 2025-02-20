@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
+
+import '../models/user_model.dart';
+import '../services/auth_service.dart';
+import '../widgets/announcement_section.dart';
 import '../widgets/clock_card.dart';
 import '../widgets/menu_grid.dart';
-import '../widgets/announcement_section.dart';
-import '../widgets/bottom_navigation.dart';
-import '../services/auth_service.dart';
-import '../models/user_model.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -71,14 +71,14 @@ class HomeScreen extends StatelessWidget {
                     const ClockCard(),
                     const SizedBox(height: 24),
                     const MenuGrid(),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 16),
                     const AnnouncementSection(),
                   ],
                 ),
               ),
             ),
           ),
-          bottomNavigationBar: const BottomNavigation(),
+          // bottomNavigationBar: const BottomNavigation(),
         );
       },
     );

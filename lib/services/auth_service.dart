@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_model.dart';
 
 class AuthService {
-  static const String baseUrl = 'https://9d3d-36-70-95-221.ngrok-free.app/api';
+  static const String baseUrl = 'https://7928-36-77-243-75.ngrok-free.app/api';
   static const String userKey = 'user_data';
   static const String tokenKey = 'auth_token';
 
@@ -19,6 +19,7 @@ class AuthService {
           'password': password,
         },
       );
+      print('Login Response: ${response.body}'); // Tambahkan ini untuk debug
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -33,6 +34,8 @@ class AuthService {
           Uri.parse('$baseUrl/admin/users/$userId'),
           headers: {'Authorization': 'Bearer $token'},
         );
+        print(
+            'User Detail Response: ${userResponse.body}'); // Tambahkan ini untuk debug
 
         if (userResponse.statusCode == 200) {
           final userData = json.decode(userResponse.body)['data'];
@@ -76,6 +79,15 @@ class AuthService {
 
   Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
+    final token = await getToken();
+
+    if (token != null) {
+      await http.post(
+        Uri.parse('$baseUrl/logout'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+    }
+
     await prefs.remove(userKey);
     await prefs.remove(tokenKey);
   }

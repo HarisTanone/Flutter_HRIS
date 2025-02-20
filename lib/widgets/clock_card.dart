@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:camera/camera.dart';
@@ -21,15 +20,16 @@ class _ClockCardState extends State<ClockCard> {
   final _locationService = LocationService();
   final _cameraService = CameraService();
   final _attendanceService = AttendanceService();
-  bool _isClockInLoading = false;
-  bool _isClockOutLoading = false;
-  bool _hasCheckedIn = false;
-  bool _hasCheckedOut = false;
+
+  bool _isLoading = false;
   bool _showCamera = false;
   File? _capturedImage;
-  String formattedDate = DateFormat('dd MMM yyyy').format(DateTime.now());
+  String? _clockInTime;
+  String? _clockOutTime;
+  Map<String, dynamic>? _todayAttendance;
+
+  String formattedDate = DateFormat('EEEE, dd MMM yyyy').format(DateTime.now());
   String officeName = '';
-  int? _todayAttendanceId;
 
   @override
   void initState() {
@@ -45,11 +45,10 @@ class _ClockCardState extends State<ClockCard> {
         setState(() {
           officeName = user!.employee!.officeId.officeName;
         });
-        // Cek attendance hari ini
         await _checkTodayAttendance(user!.employee!.id);
       }
     } catch (e) {
-      print('Initialization error: $e');
+      _showError('Initialization error: $e');
     }
   }
 
@@ -59,281 +58,302 @@ class _ClockCardState extends State<ClockCard> {
           await _attendanceService.getTodayAttendance(employeeId);
       if (attendance != null) {
         setState(() {
-          _hasCheckedIn = true;
-          _todayAttendanceId = attendance['id'];
-          _hasCheckedOut = attendance['clock_out'] != null;
+          _todayAttendance = attendance;
+          _clockInTime = DateFormat('HH:mm').format(
+            DateTime.parse(attendance['clock_in']),
+          );
+          if (attendance['clock_out'] != null) {
+            _clockOutTime = DateFormat('HH:mm').format(
+              DateTime.parse(attendance['clock_out']),
+            );
+          }
         });
       }
     } catch (e) {
-      print('Check attendance error: $e');
+      _showError('Failed to check attendance: $e');
     }
   }
 
-  Future<void> _handleClockIn() async {
+  Future<void> _handleAttendance(bool isClockIn) async {
     setState(() => _showCamera = true);
-  }
-
-  Future<void> _handleClockOut() async {
-    setState(() => _showCamera = true);
-  }
-
-  Future<void> _submitAttendance() async {
-    try {
-      setState(() => _isClockInLoading = true);
-
-      final position = await _locationService.getCurrentLocation();
-      if (position == null) {
-        throw 'Could not get location';
-      }
-
-      if (_capturedImage == null) {
-        throw 'Please take a photo first';
-      }
-
-      final base64Image = await _cameraService.convertToBase64(_capturedImage!);
-
-      final user = await AuthService().getUserData();
-      if (user?.employee == null) {
-        throw 'User data not found';
-      }
-
-      final response = await _attendanceService.clockIn(
-        employeeId: user!.employee!.id,
-        officeId: user.employee!.officeId.id,
-        latitude: position.latitude,
-        longitude: position.longitude,
-        photoBase64: base64Image,
-      );
-
-      if (response.statusCode == 200) {
-        // Refresh attendance data after clock in
-        await _checkTodayAttendance(user.employee!.id);
-        setState(() {
-          _showCamera = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Clock in successful')),
-        );
-      } else if (response.statusCode == 404) {
-        final errorMessage = response.body.isNotEmpty
-            ? json.decode(response.body)['message']
-            : 'Unknown error occurred';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(errorMessage)),
-        );
-      } else {
-        throw 'Clock in failed with status: ${response.statusCode}';
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString())),
-      );
-    } finally {
-      setState(() => _isClockInLoading = false);
-    }
-  }
-
-  Future<void> _submitClockOut() async {
-    try {
-      setState(() => _isClockOutLoading = true);
-
-      final position = await _locationService.getCurrentLocation();
-      if (position == null) {
-        throw 'Could not get location';
-      }
-
-      if (_capturedImage == null) {
-        throw 'Please take a photo first';
-      }
-
-      if (_todayAttendanceId == null) {
-        throw 'No clock in record found for today';
-      }
-
-      final base64Image = await _cameraService.convertToBase64(_capturedImage!);
-
-      final response = await _attendanceService.clockOut(
-        attendanceId: _todayAttendanceId!,
-        latitude: position.latitude,
-        longitude: position.longitude,
-        photoBase64: base64Image,
-      );
-
-      if (response.statusCode == 200) {
-        final user = await AuthService().getUserData();
-        // Refresh attendance data after clock out
-        if (user?.employee != null) {
-          await _checkTodayAttendance(user!.employee!.id);
-        }
-        setState(() {
-          _showCamera = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Clock out successful')),
-        );
-      } else {
-        throw 'Clock out failed with status: ${response.statusCode}';
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString())),
-      );
-    } finally {
-      setState(() => _isClockOutLoading = false);
-    }
   }
 
   Future<void> _takePicture() async {
     try {
+      setState(() => _isLoading = true);
       final capturedImage = await _cameraService.takePicture();
       if (capturedImage != null) {
         setState(() {
           _capturedImage = capturedImage;
           _showCamera = false;
         });
-        // Submit berdasarkan aksi yang sedang dilakukan
-        if (!_hasCheckedIn) {
-          await _submitAttendance();
+
+        final position = await _locationService.getCurrentLocation();
+        if (position == null) throw 'Could not get location';
+
+        final base64Image = await _cameraService.convertToBase64(capturedImage);
+        final user = await AuthService().getUserData();
+        if (user?.employee == null) throw 'User data not found';
+
+        final response = _clockInTime == null
+            ? await _attendanceService.clockIn(
+                employeeId: user!.employee!.id,
+                officeId: user.employee!.officeId.id,
+                latitude: position.latitude,
+                longitude: position.longitude,
+                photoBase64: base64Image,
+              )
+            : await _attendanceService.clockOut(
+                attendanceId: _todayAttendance!['id'],
+                latitude: position.latitude,
+                longitude: position.longitude,
+                photoBase64: base64Image,
+              );
+
+        if (response['status'] == 200) {
+          await _checkTodayAttendance(user!.employee!.id);
+          _showSuccess(response['message']);
         } else {
-          await _submitClockOut();
+          _showError(response['message']);
         }
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString())),
-      );
+      _showError(e.toString());
+    } finally {
+      setState(() => _isLoading = false);
     }
   }
 
-  @override
-  void dispose() {
-    _cameraService.dispose();
-    super.dispose();
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: const TextStyle(color: Colors.white)),
+        backgroundColor: Colors.red,
+      ),
+    );
+  }
+
+  void _showSuccess(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: const TextStyle(color: Colors.white)),
+        backgroundColor: Colors.green,
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.red,
-        borderRadius: BorderRadius.circular(12),
+        gradient: const LinearGradient(
+          colors: [Color(0xFFAE0606), Color(0xFF900C0C)], // Warna gradient
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        border: Border.all(
+          color: const Color(0xFF650000), // Warna border
+          width: 2, // Ketebalan border
+        ),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 5),
+          ),
+        ],
       ),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            officeName,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '$formattedDate (08:30 - 17:00)',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-            ),
-          ),
-          const SizedBox(height: 16),
-          if (_showCamera && _cameraService.controller != null) ...[
-            SizedBox(
-              height: 420,
-              width: double.infinity,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: CameraPreview(_cameraService.controller!),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(top: 10.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  ElevatedButton.icon(
-                    onPressed: _takePicture,
-                    icon: const Icon(Icons.camera),
-                    label: const Text('Save'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: Colors.blue,
-                    ),
-                  ),
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      setState(() {
-                        _showCamera = false;
-                        _capturedImage = null;
-                      });
-                    },
-                    icon: const Icon(Icons.cancel),
-                    label: const Text('Cancel'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: Colors.red,
-                    ),
-                  ),
-                ],
-              ),
-            )
-          ] else ...[
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _handleClockIn,
-                    icon: _isClockInLoading
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                            ),
-                          )
-                        : const Icon(Icons.login),
-                    label: Text(_hasCheckedIn ? 'Checked In' : 'Clock In'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: Colors.blue,
-                    ),
+          Row(
+            children: [
+              const Icon(Icons.business, color: Colors.white, size: 24),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  officeName,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: (_hasCheckedIn && !_hasCheckedOut)
-                        ? _handleClockOut
-                        : null,
-                    icon: _isClockOutLoading
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                            ),
-                          )
-                        : const Icon(Icons.logout),
-                    label: Text(_hasCheckedOut ? 'Checked Out' : 'Clock Out'),
-                    style: ButtonStyle(
-                      backgroundColor: WidgetStateProperty.all(Colors.white),
-                      foregroundColor: WidgetStateProperty.all(Colors.blue),
-                    ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            formattedDate,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 16,
+            ),
+          ),
+          if (_clockInTime != null) ...[
+            const SizedBox(height: 16),
+            _buildTimeCard(
+              icon: Icons.login,
+              label: 'Clock In',
+              time: _clockInTime!,
+              color: Colors.black,
+            ),
+          ],
+          if (_clockOutTime != null) ...[
+            const SizedBox(height: 8),
+            _buildTimeCard(
+              icon: Icons.logout,
+              label: 'Clock Out',
+              time: _clockOutTime!,
+              color: Colors.black,
+            ),
+          ],
+          if (_showCamera && _cameraService.controller != null) ...[
+            const SizedBox(height: 16),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Stack(
+                children: [
+                  SizedBox(
+                    height: 550,
+                    width: double.infinity,
+                    child: CameraPreview(_cameraService.controller!),
                   ),
+                  if (_isLoading)
+                    Container(
+                      height: 550,
+                      width: double.infinity,
+                      color: Colors.black45,
+                      child: const Center(
+                        child: CircularProgressIndicator(color: Colors.white),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _buildActionButton(
+                  icon: Icons.camera_alt,
+                  label: 'Take Photo',
+                  onPressed: _takePicture,
+                  isLoading: _isLoading,
+                ),
+                _buildActionButton(
+                  icon: Icons.close,
+                  label: 'Cancel',
+                  onPressed: () => setState(() => _showCamera = false),
+                  color: Colors.red,
                 ),
               ],
             ),
-          ],
-          if (_capturedImage != null && !(_hasCheckedIn && _hasCheckedOut)) ...[
-            const SizedBox(height: 16),
-            const Text(
-              'Photo captured successfully!',
-              style: TextStyle(color: Colors.white),
-            ),
+          ] else ...[
+            const SizedBox(height: 24),
+            _buildMainButton(),
           ],
         ],
       ),
     );
+  }
+
+  Widget _buildTimeCard({
+    required IconData icon,
+    required String label,
+    required String time,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: Colors.white, size: 20),
+          const SizedBox(width: 12),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 14,
+            ),
+          ),
+          const Spacer(),
+          Text(
+            time,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+    Color color = Colors.black,
+    bool isLoading = false,
+  }) {
+    return ElevatedButton.icon(
+      onPressed: isLoading ? null : onPressed,
+      icon: isLoading
+          ? const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : Icon(icon),
+      label: Text(label),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.white,
+        foregroundColor: color,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMainButton() {
+    final bool canClockIn = _clockInTime == null;
+    final bool canClockOut = _clockInTime != null && _clockOutTime == null;
+
+    if (!canClockIn && !canClockOut) {
+      return const SizedBox.shrink();
+    }
+
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: () => _handleAttendance(canClockIn),
+        icon: Icon(canClockIn ? Icons.login : Icons.logout),
+        label: Text(canClockIn ? 'Clock In' : 'Clock Out'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black,
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _cameraService.dispose();
+    super.dispose();
   }
 }
